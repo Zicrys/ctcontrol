@@ -1,0 +1,261 @@
+#!/bin/bash
+
+if [[ $USER != "root" ]]; then
+    echo "This script need run by root"
+    exit 0
+fi
+
+# IMPORTANT: do not change this PATH list (control_path), its need to correct add and remove PATH's
+control_path="" # Если здесь путь есть, а в sudoers он очищен вручную, то при след. запуске в sudoers он не запишется
+
+crit_t=80                                                      # Критическая температура по умолчанию
+survey_t=1                                                     # Время опроса файла с температурой по умолчанию
+
+script_name="$0"                                               # $0 - название данного файла 
+about="\nOriginal program name: crit_temp_cpu_control\n\nAuthor: Zicrys, Version: 1.0\n"
+daemon_name="crit-temp-cpu-control"
+path_to_daemons="/etc/systemd/system/"
+path_to_curr_script=$(dirname "$(readlink -f "$0")")           # путь к данному скрипту
+
+# Формирование массива из  control_path элементы разделённы символом ':'
+IFS=':' read -a paths_array <<< "$control_path"
+
+function Is_Script_Use_From_Curr_Dir {
+    feature=${script_name:0:2}                                 # признак запуска из текущей директории
+    if [[ $feature == "./" ]]; then
+        true
+        return
+    else
+        false
+        return
+    fi
+}
+
+function Remove_Earlier_Add_Path {
+    if [[ ${#paths_array[@]} -gt 0 && -n ${paths_array[$1]} ]]; then
+        path="${paths_array[$1]}"
+        sed -i "s|$path:||" /etc/sudoers
+        if Is_Script_Use_From_Curr_Dir; then
+            sed -i "9s|:$path:||" "$path_to_curr_script/$script_name" # Изменения будут применены к 9 строке указанного файла 
+        else
+            sed -i "9s|:$path:||" "$script_name" 
+        fi
+    fi
+}
+
+# Проверка, был ли добавлен путь для запуска
+# данного скрипта через sudo в /etc/sudoers, secure_path
+function Is_Sudoers_Modified {
+    path="$(grep -P "^(Defaults\tsecure_path=\").*$path_to_curr_script.*" /etc/sudoers)" # -P Perl regexp mode for using '\t'
+                                                                                         # '^' - начало искомой фразы начинается с
+                                                                                         # Default '\tab' secure_path="разные_пути:путь_к_скрипту:разные_пути
+    if [[ -n "$path" ]]; then
+        true
+        return
+    else
+        false
+        return
+    fi
+}
+
+function Daemon_Creating {
+    echo -e "[Unit]
+Description=Monitoring critical temerature of processor
+After=network.target
+
+[Service]
+WorkingDirectory=$path_to_curr_script 
+ExecStart=$path_to_curr_script/$script_name $1
+
+[Install]
+WantedBy=multi-user.target" > $path_to_daemons/$daemon_name.service
+}
+
+function Is_Service_Exist {
+    if [[ -f "$path_to_daemons$daemon_name.service"  ]]; then
+        true
+        return
+    else
+        false
+        return
+    fi
+}
+
+# For indent in Usage function
+for (( i=0; i<${#script_name}+6; i++  )); do
+    space+=" "
+done
+
+function Usage {
+    NEWLINE=$'\n'
+    echo -e "$about"
+    if Is_Script_Use_From_Curr_Dir; then    # Если скрипт запускается из $PATH, нужно игнорировать slice :2
+        echo "Usage: ${script_name:2} [-s] [-r] [-d] [-u] [-h] [-t <number>] "    
+    else
+        echo "Usage: ${script_name} [-s] [-r] [-d] [-u] [-h] [-t <number>] "
+        space+="  "    # add 2 missing space into './'
+    fi
+    echo "$space[-x <number>]"
+    echo "Params:"
+    echo "  -s                         Stop running script. The script will be"
+    echo "                             run again on the next reboot.${NEWLINE}"
+    echo "  -r                         If script installing as daemon and inactive then"
+    echo "                             start the script with received above settings."
+    echo "                             Else start the script with default settings"
+    echo "                             in the current session.${NEWLINE}"
+    echo "  -d                         Install this script with set params of time"
+    echo "                             and temperature. In the next sessions script"
+    echo "                             will be start again.${NEWLINE}"
+    echo "  -u                         Stop this script. Stop daemon and remove"
+    echo "                             service.${NEWLINE}"
+    echo "  -h                         Help information for usage.${NEWLINE}"
+    echo "  -t <number>                Set critical temperature after which will be"
+    echo "                             shutdown the system. Argument must be integer"
+    echo "                             number. Default crit_t=$crit_t C\u00B0${NEWLINE}"
+    echo "  -x <number>                Set time of survey temperature at the moment"
+    echo "                             Time of survey must be integer or float number"
+    echo "                             in format: '1', '0.5'. '.5'. Default survey_t=$survey_t sec.${NEWLINE}"
+}
+
+while [ $# -gt 0 ]; do
+    while getopts ':srduht:x:' VAL ; do                             # ':' - признак наличия аргумента, 'VAL' - найденный ключ
+        case $VAL in                                                # '$VAL' - введённый флаг
+            s) flag_s=1 ;;
+            r) flag_r=1 ;;
+            d) flag_d=1 ;;
+            u) flag_u=1 ;;
+            h) flag_h=1 ;;
+            t) flag_t=1
+               temp_f=$VAL                                          # temperature flag
+               crit_t=$OPTARG                                       # $OPTARG - это введённый аргумент
+               shift ;;
+            x) flag_x=1
+               time_f=$VAL                                          # time flag
+   	           survey_t=$OPTARG
+               shift ;;
+            :) echo "For flag -$OPTARG will be not a give the argument, the argument this flag set to default" ;;
+            *) error_flags+=($OPTARG) ;;
+        esac
+        shift
+        OPTIND=1
+    done
+    if [ $# -gt 0 ]; then
+        POSITIONALPARAM=(${POSITIONALPARAM[@]} $1)
+        shift
+        OPTIND=1
+    fi
+done
+
+if [[ -n ${POSITIONALPARAM[@]} && -n ${error_flags[@]} ]]; then
+    for elem in "${!error_flags[@]}"; do                             # перебор элементов из списка error_flags, где @ - все элементы списка
+        echo "Unknown input flag: '-${error_flags[$elem]}'"
+    done
+    echo -e "Unknown input: \"${POSITIONALPARAM[@]}\""
+    echo "Check '-h' for getting a help information."
+    exit 1
+elif [[ -n ${POSITIONALPARAM[@]} ]]; then
+    echo -e "Unknown input: \"${POSITIONALPARAM[@]}\""
+    echo "Check '-h' for getting a help information."
+    exit 1
+elif [[ -n ${error_flags[@]} ]]; then
+    for elem in "${!error_flags[@]}"; do
+        echo "Unknown input flag: '-${error_flags[$elem]}'"
+    done
+    echo "Check '-h' for getting a help information."
+    exit 1
+fi
+
+if [[ flag_r -eq 1 ]]; then                # run script
+    if Is_Service_Exist; then
+        echo "Run script"
+        systemctl start $daemon_name
+        exit 0
+    fi
+fi
+
+if [[ flag_u -ne 1 ]]; then                # add PATH's
+    if Is_Script_Use_From_Curr_Dir; then
+        sed -i "9s|control_path=\"|control_path=\":${path_to_curr_script}:|" "$path_to_curr_script/$script_name" # Сохранить путь в control_path данного скрипта
+    else
+        sed -i "9s|control_path=\"|control_path=\":${path_to_curr_script}:|" "$script_name" 
+    fi
+    sed -i "s|Defaults\tsecure_path=\"|Defaults\tsecure_path=\"$path_to_curr_script:|" /etc/sudoers              # Добавить путь в /etc/sudoers в secure_path   
+fi
+Remove_Earlier_Add_Path 1
+
+if [[ flag_u -eq 1 ]]; then                # uninstall daemon
+    Remove_Earlier_Add_Path 1
+    echo "Removing PATH from /etc/sudoers"
+    if Is_Service_Exist; then
+        echo "Uninstall daemon"
+        systemctl stop $daemon_name
+        systemctl disable $daemon_name.service
+        systemctl daemon-reload
+        rm $path_to_daemons$daemon_name.service
+        exit 0
+    else 
+        echo "Daemon is not Install"
+        exit 0
+    fi
+fi
+
+if [[ flag_h -eq 1 ]]; then                # show help informtion
+    Usage
+    exit 0
+fi
+
+if [[ flag_t -eq 1 ]]; then                # set temp
+    if ! [[ $crit_t =~ ^[0-9]+$ ]]; then   # '=~' - строка справа от данного оператора считается regex выражением;
+                                           # regex: '^' - начало строки, [0-9] числа от 0 до 9,
+                                           #        '+' - любое положительное число предыдущих символов,
+                                           #        '$' - конец строки. 
+        echo "Value of flag '-$temp_f' must be a integer number!"
+        exit 1
+    fi
+    input_params+="-$temp_f $crit_t "
+    echo -e "Set crit temp= $crit_t C\u00B0"
+fi
+
+if [[ flag_x -eq 1 ]]; then
+    if ! [[ $survey_t =~ ^[0-9]{0,}[.]{0,1}[0-9]+$ ]]; then
+	echo "Value of flag '-$time_f' must be a integer or decimal number in format:
+    '5' - for integer value
+    '0.5' - for decimal value
+    '.5' - for decimal value"
+	exit 1
+    fi
+    echo "Set survey time=$survey_t"
+    input_params+="-$time_f $survey_t "
+fi
+
+if [[ flag_d -eq 1 ]]; then                # install as daemon, add elif '-u'
+    echo "Install as daemon"
+    Daemon_Creating "${input_params% }"    # удаляет пробел в конце строки
+                                           # ${string %pattern} - удаляет последний элемент строки согласно паттерну и
+                                           # возвращает строку, %% - удаляет все совпадения в конце строки
+    systemctl daemon-reload
+    systemctl enable $daemon_name
+    systemctl start $daemon_name.service
+fi
+
+if [[ flag_s -eq 1 ]]; then                # stop the running script
+    if (systemctl -q is-active $daemon_name.service) then
+        systemctl stop $daemon_name
+        echo "The sript was stopped"
+        exit 0
+    else
+        echo "Script inactive"
+        exit 0
+    fi
+fi
+
+sleep 40s
+while [ true ]; do
+    let temp_cpu="$(< /sys/class/thermal/thermal_zone0/temp) / 1000"
+
+    if [ $temp_cpu -gt $crit_t ]; then 
+        echo -e "Warning! Critical temp=$temp_cpu C\u00B0 !"
+        shutdown now
+    fi
+    sleep "$survey_t"s
+done
