@@ -2,11 +2,11 @@
 
 Скрипт для контроля за температурой процессора для различных микрокомпьютеров, таких как Orange Pi и подобных, с ОС Debian Linux и командной оболочкой bash. У которых нет встроенной аппаратной возможности по снижению мощности CPU или автоматического отключения при достижении критической температуры. Данный скрипт позволяет установить температуру, по достижению которой будет отправлена команда на мгновенное выключение ОС.
 <!--Бейджики с информацией о репозитории-->
-![Static Badge](https://img.shields.io/badge/Zicrys-ctcontrol-ctcontrol)
-![Github top language](https://img.shields.io/github/languages/top/Zicrys/ctcontrol)
+[![Static Badge](https://img.shields.io/badge/Zicrys-ctcontrol-ctcontrol)](https://github.com/Zicrys/ctcontrol)
+[![Github top language](https://img.shields.io/github/languages/top/Zicrys/ctcontrol)](https://github.com/search?q=repo%3AZicrys%2Fctcontrol++language%3AShell&type=code)
 ![Github](https://img.shields.io/github/license/Zicrys/ctcontrol)
-![Github Repo stars](https://img.shields.io/github/stars/Zicrys/ctcontrol)
-![Github issues](https://img.shields.io/github/issues/Zicrys/ctcontrol)
+[![Github Repo stars](https://img.shields.io/github/stars/Zicrys/ctcontrol)](https://github.com/Zicrys/ctcontrol/stargazers)
+[![Github issues](https://img.shields.io/github/issues/Zicrys/ctcontrol)](https://github.com/Zicrys/ctcontrol/issues)
 
 ## Установка
 
